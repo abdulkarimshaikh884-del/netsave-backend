@@ -11,8 +11,8 @@ const cors = require('cors');
 const compression = require('compression');
 const morgan = require('morgan');
 
-const { initFirebase } = require('./config/firebase');
-const { initBrowser, closeBrowser } = require('./services/browserService');
+const { supabase } = require('./config/supabase');
+// Browser services removed for Render.com compatibility
 const { createRateLimiter } = require('./middleware/rateLimiter');
 const { authenticate } = require('./middleware/auth');
 
@@ -133,15 +133,14 @@ async function startServer() {
     console.log('║     🚀 NetSave Backend Starting...    ║');
     console.log('╚═══════════════════════════════════════╝');
 
-    // 1. Init Firebase Admin
-    console.log('[INIT] Connecting to Firebase...');
-    initFirebase();
-    console.log('[INIT] ✅ Firebase connected');
+    // 1. Verify Supabase Configuration
+    console.log('[INIT] Verifying Supabase configuration...');
+    if (supabase) {
+      console.log('[INIT] ✅ Supabase Client connected');
+    }
 
-    // 2. Launch Puppeteer browser
-    console.log('[INIT] Launching Puppeteer browser...');
-    await initBrowser();
-    console.log('[INIT] ✅ Puppeteer browser ready');
+    // 2. Puppeteer browser omitted for Render.com compatibility
+    console.log('[INIT] Optional Puppeteer browser initialization skipped');
 
     // 3. Start Express server
     const server = app.listen(PORT, '0.0.0.0', () => {
@@ -160,8 +159,8 @@ async function startServer() {
         console.log('[SHUTDOWN] HTTP server closed');
       });
 
-      await closeBrowser();
-      console.log('[SHUTDOWN] Puppeteer browser closed');
+      // Puppeteer cleanup skipped
+      console.log('[SHUTDOWN] Optional browser cleanup skipped');
 
       process.exit(0);
     };

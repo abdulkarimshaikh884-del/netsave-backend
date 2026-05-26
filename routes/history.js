@@ -1,92 +1,86 @@
 // ═══════════════════════════════════════════════════════
-// /api/history — Browsing History Endpoints
-// CRUD for user's cloud browsing history
+// /api/history — Browsing History Endpoints (Supabase Client)
 // ═══════════════════════════════════════════════════════
 
 const express = require('express');
 const router = express.Router();
 
-const { getDb, now } = require('../config/firebase');
-const { successResponse, errorResponse, getTodayIST } = require('../utils/helpers');
+const { supabase } = require('../config/supabase');
+const { successResponse, errorResponse } = require('../utils/helpers');
 
 /**
  * GET /api/history
  *
- * Fetch paginated browsing history for the authenticated user.
+ * Fetch paginated browsing history for the authenticated user using Supabase client.
  *
  * Query params:
  *   ?limit=20           - Items per page (default 20, max 50)
- *   ?startAfter=docId   - Cursor for pagination
+ *   ?offset=0           - Offset index (default 0)
  *   ?domain=youtube.com - Filter by domain
- *   ?date=2026-05-26    - Filter by specific date
+ *   ?date=2026-05-26    - Filter by specific date (YYYY-MM-DD)
  */
 router.get('/', async (req, res, next) => {
   try {
     const uid = req.uid;
     const limit = Math.min(parseInt(req.query.limit) || 20, 50);
-    const startAfter = req.query.startAfter || null;
+    const offset = Math.max(parseInt(req.query.offset) || 0, 0);
     const domainFilter = req.query.domain || null;
     const dateFilter = req.query.date || null;
 
-    const db = getDb();
-    let query = db
-      .collection('users').doc(uid)
-      .collection('browserHistory')
-      .orderBy('visitedAt', 'desc');
+    let queryBuilder = supabase
+      .from('browser_history')
+      .select('id, url, title, favicon, domain, original_size_kb, compressed_size_kb, saved_kb, session_id, duration, visited_at')
+      .eq('user_id', uid)
+      .order('visited_at', { ascending: false });
 
     // ── Domain filter ──
     if (domainFilter) {
-      query = query.where('domain', '==', domainFilter.toLowerCase());
+      queryBuilder = queryBuilder.eq('domain', domainFilter.toLowerCase());
     }
 
     // ── Date filter ──
     if (dateFilter) {
-      const startOfDay = new Date(dateFilter + 'T00:00:00+05:30');
-      const endOfDay = new Date(dateFilter + 'T23:59:59+05:30');
-
-      query = query
-        .where('visitedAt', '>=', startOfDay)
-        .where('visitedAt', '<=', endOfDay);
+      queryBuilder = queryBuilder
+        .gte('visited_at', `${dateFilter}T00:00:00.000Z`)
+        .lte('visited_at', `${dateFilter}T23:59:59.999Z`);
     }
 
-    // ── Pagination cursor ──
-    if (startAfter) {
-      const lastDoc = await db
-        .collection('users').doc(uid)
-        .collection('browserHistory').doc(startAfter)
-        .get();
+    // Range-based pagination
+    queryBuilder = queryBuilder.range(offset, offset + limit);
 
-      if (lastDoc.exists) {
-        query = query.startAfter(lastDoc);
-      }
-    }
+    const { data, error } = await queryBuilder;
 
-    // ── Execute ──
-    const snapshot = await query.limit(limit + 1).get(); // +1 to check hasMore
+    if (error) throw error;
 
-    const items = [];
-    const docs = snapshot.docs.slice(0, limit);
+    // +1 check for hasMore pagination
+    const items = data.slice(0, limit);
+    const hasMore = data.length > limit;
 
-    docs.forEach(doc => {
-      items.push({
-        id: doc.id,
-        ...doc.data(),
-        visitedAt: doc.data().visitedAt?.toDate?.() || null,
-      });
-    });
-
-    const hasMore = snapshot.docs.length > limit;
-    const nextCursor = hasMore ? docs[docs.length - 1]?.id : null;
+    // Map DB names to expected client naming camelCase if needed, but we keep DB output clean
+    const formattedItems = items.map(item => ({
+      id: item.id,
+      url: item.url,
+      title: item.title,
+      favicon: item.favicon,
+      domain: item.domain,
+      originalSizeKB: item.original_size_kb,
+      compressedSizeKB: item.compressed_size_kb,
+      savedKB: item.saved_kb,
+      sessionId: item.session_id,
+      duration: item.duration,
+      visitedAt: item.visited_at,
+    }));
 
     return res.json(successResponse({
-      items,
+      items: formattedItems,
       pagination: {
         limit,
-        count: items.length,
+        offset,
+        count: formattedItems.length,
         hasMore,
-        nextCursor,
+        nextOffset: hasMore ? offset + limit : null,
       },
-    }, `Found ${items.length} history items`));
+    }, `Found ${formattedItems.length} history items`));
 
   } catch (err) {
     next(err);
@@ -96,40 +90,38 @@ router.get('/', async (req, res, next) => {
 /**
  * GET /api/history/domains
  *
- * Get a summary of unique domains visited with visit counts.
- * Useful for the "top sites" view in the browser screen.
+ * Get unique domains visited recently with count and aggregate savings.
+ * Performed in-memory to prevent complex database setups on client side.
  */
 router.get('/domains', async (req, res, next) => {
   try {
     const uid = req.uid;
-    const db = getDb();
 
-    // Get recent history (last 200 entries) and aggregate client-side
-    // This is cheaper than a Firestore aggregation query
-    const snapshot = await db
-      .collection('users').doc(uid)
-      .collection('browserHistory')
-      .orderBy('visitedAt', 'desc')
-      .limit(200)
-      .get();
+    const { data, error } = await supabase
+      .from('browser_history')
+      .select('domain, favicon, saved_kb, visited_at')
+      .eq('user_id', uid)
+      .order('visited_at', { ascending: false })
+      .limit(200);
+
+    if (error) throw error;
 
     const domainMap = new Map();
 
-    snapshot.forEach(doc => {
-      const data = doc.data();
-      const domain = data.domain || 'unknown';
+    data.forEach(item => {
+      const domain = item.domain || 'unknown';
 
       if (domainMap.has(domain)) {
         const entry = domainMap.get(domain);
         entry.visitCount++;
-        entry.totalSavedKB += data.savedKB || 0;
+        entry.totalSavedKB += item.saved_kb || 0;
       } else {
         domainMap.set(domain, {
           domain,
-          favicon: data.favicon || '',
+          favicon: item.favicon || '',
           visitCount: 1,
-          totalSavedKB: data.savedKB || 0,
-          lastVisited: data.visitedAt?.toDate?.() || null,
+          totalSavedKB: item.saved_kb || 0,
+          lastVisited: item.visited_at,
         });
       }
     });
@@ -137,7 +129,7 @@ router.get('/domains', async (req, res, next) => {
     // Sort by visit count descending
     const domains = Array.from(domainMap.values())
       .sort((a, b) => b.visitCount - a.visitCount)
-      .slice(0, 20); // Top 20 domains
+      .slice(0, 20);
 
     return res.json(successResponse({
       domains,
@@ -161,23 +153,24 @@ router.delete('/:docId', async (req, res, next) => {
 
     if (!docId) {
       return res.status(400).json(
-        errorResponse('Document ID is required.', 'MISSING_DOC_ID')
+        errorResponse('ID is required.', 'MISSING_ID')
       );
     }
 
-    const db = getDb();
-    const docRef = db
-      .collection('users').doc(uid)
-      .collection('browserHistory').doc(docId);
+    const { data, error, count } = await supabase
+      .from('browser_history')
+      .delete()
+      .eq('id', docId)
+      .eq('user_id', uid)
+      .select();
 
-    const doc = await docRef.get();
-    if (!doc.exists) {
+    if (error) throw error;
+
+    if (!data || data.length === 0) {
       return res.status(404).json(
         errorResponse('History entry not found.', 'NOT_FOUND')
       );
     }
-
-    await docRef.delete();
 
     return res.json(successResponse(
       { deletedId: docId },
@@ -193,43 +186,24 @@ router.delete('/:docId', async (req, res, next) => {
  * DELETE /api/history
  *
  * Clear all browsing history for the authenticated user.
- * Uses batched deletes for efficiency.
  */
 router.delete('/', async (req, res, next) => {
   try {
     const uid = req.uid;
-    const db = getDb();
-    const collectionRef = db
-      .collection('users').doc(uid)
-      .collection('browserHistory');
 
-    let totalDeleted = 0;
+    const { data, error } = await supabase
+      .from('browser_history')
+      .delete()
+      .eq('user_id', uid)
+      .select();
 
-    // Delete in batches of 100 (Firestore batch limit: 500)
-    const deleteInBatches = async () => {
-      const snapshot = await collectionRef.limit(100).get();
+    if (error) throw error;
 
-      if (snapshot.empty) return;
-
-      const batch = db.batch();
-      snapshot.forEach(doc => {
-        batch.delete(doc.ref);
-        totalDeleted++;
-      });
-
-      await batch.commit();
-
-      // If we got exactly 100, there might be more
-      if (snapshot.size === 100) {
-        await deleteInBatches();
-      }
-    };
-
-    await deleteInBatches();
+    const count = data ? data.length : 0;
 
     return res.json(successResponse(
-      { deletedCount: totalDeleted },
-      `Cleared ${totalDeleted} history entries`
+      { deletedCount: count },
+      `Cleared ${count} history entries`
     ));
 
   } catch (err) {

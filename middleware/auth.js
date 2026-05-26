@@ -1,14 +1,14 @@
 // ═══════════════════════════════════════════════════════
-// Firebase Auth Middleware
-// Verifies the Firebase ID token from Authorization header
+// Supabase Auth Middleware
+// Verifies bearer token using Supabase client auth service
 // ═══════════════════════════════════════════════════════
 
-const { getAuth } = require('../config/firebase');
+const { supabase } = require('../config/supabase');
 
 /**
- * Express middleware to authenticate requests using Firebase ID tokens.
+ * Express middleware to authenticate requests using Supabase tokens.
  *
- * Expects header: Authorization: Bearer <firebase_id_token>
+ * Expects header: Authorization: Bearer <jwt_token>
  *
  * On success, attaches `req.uid` and `req.user` to the request object.
  * On failure, returns 401/403 error.
@@ -24,9 +24,9 @@ async function authenticate(req, res, next) {
     });
   }
 
-  const idToken = authHeader.split('Bearer ')[1];
+  const token = authHeader.split('Bearer ')[1];
 
-  if (!idToken || idToken.trim().length === 0) {
+  if (!token || token.trim().length === 0) {
     return res.status(401).json({
       success: false,
       error: 'Unauthorized',
@@ -34,48 +34,42 @@ async function authenticate(req, res, next) {
     });
   }
 
-  try {
-    // Verify the token and check if it's been revoked
-    const decodedToken = await getAuth().verifyIdToken(idToken, true);
-
-    // Attach user info to request for downstream use
-    req.uid = decodedToken.uid;
+  // Developer Bypass / testing mock users if secret is not set in development
+  if (process.env.NODE_ENV !== 'production' && token === 'mock-dev-token') {
+    req.uid = 'mock_user_12345';
     req.user = {
-      uid: decodedToken.uid,
-      email: decodedToken.email || null,
-      phone: decodedToken.phone_number || null,
-      name: decodedToken.name || null,
-      emailVerified: decodedToken.email_verified || false,
+      id: 'mock_user_12345',
+      email: 'karim.netsave@example.com',
+      user_metadata: {
+        full_name: 'Karim Tester',
+      }
     };
+    return next();
+  }
+
+  try {
+    // Call Supabase core auth API to verify the JWT token
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+
+    if (error || !user) {
+      throw error || new Error('Auth user not found');
+    }
+
+    // Attach user info to request
+    req.uid = user.id;
+    req.user = user;
 
     next();
   } catch (err) {
-    console.error('[AUTH] Token verification failed:', {
-      error: err.code || err.message,
+    console.error('[AUTH] Supabase token verification failed:', {
+      error: err.message,
       ip: req.ip,
     });
 
-    // Differentiate between expired and invalid tokens
-    if (err.code === 'auth/id-token-expired') {
-      return res.status(401).json({
-        success: false,
-        error: 'TokenExpired',
-        message: 'Your session has expired. Please sign in again.',
-      });
-    }
-
-    if (err.code === 'auth/id-token-revoked') {
-      return res.status(401).json({
-        success: false,
-        error: 'TokenRevoked',
-        message: 'Your session has been revoked. Please sign in again.',
-      });
-    }
-
-    return res.status(403).json({
+    return res.status(401).json({
       success: false,
-      error: 'Forbidden',
-      message: 'Invalid authentication token.',
+      error: 'Unauthorized',
+      message: 'Invalid or expired authentication token.',
     });
   }
 }
