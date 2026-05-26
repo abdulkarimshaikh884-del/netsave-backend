@@ -59,6 +59,11 @@ const UNSAFE_DOMAINS = [
  * }
  */
 router.post('/', async (req, res, next) => {
+  if (process.env.PUPPETEER_SKIP_DOWNLOAD === 'true') {
+    return res.status(503).json(
+      errorResponse('Browser feature not available on this server', 'BROWSER_UNAVAILABLE')
+    );
+  }
   const { url: rawUrl, mode = 'full', sessionId } = req.body;
   const uid = req.uid;
 

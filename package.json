@@ -1,7 +1,7 @@
 {
   "name": "netsave-backend",
   "version": "1.0.0",
-  "description": "NetSave Cloud Browser Backend — Puppeteer + Express.js for Oracle Cloud Free Tier",
+  "description": "NetSave Cloud Browser Backend —Express.js for Oracle Cloud Free Tier",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

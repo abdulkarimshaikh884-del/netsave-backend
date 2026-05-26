@@ -4,7 +4,7 @@
 // Handles page fetching, image interception, compression
 // ═══════════════════════════════════════════════════════
 
-const puppeteer = require('puppeteer');
+const puppeteer = process.env.PUPPETEER_SKIP_DOWNLOAD === 'true' ? null : require('puppeteer');
 const { compressImage, simplifyHtml } = require('./compressionService');
 
 // ── Config ──
@@ -48,6 +48,10 @@ const BLOCKED_DOMAINS = [
  * Configured for Oracle Cloud Free Tier (1GB RAM).
  */
 async function initBrowser() {
+  if (process.env.PUPPETEER_SKIP_DOWNLOAD === 'true') {
+    console.log('[BROWSER] Optional browser: PUPPETEER_SKIP_DOWNLOAD is true. Skipping browser startup.');
+    return;
+  }
   if (browser) return;
 
   browser = await puppeteer.launch({
@@ -93,6 +97,9 @@ async function initBrowser() {
  * Close the shared browser instance.
  */
 async function closeBrowser() {
+  if (process.env.PUPPETEER_SKIP_DOWNLOAD === 'true') {
+    return;
+  }
   if (browser) {
     await browser.close();
     browser = null;
@@ -112,6 +119,13 @@ async function closeBrowser() {
  */
 async function fetchPage(url, options = {}) {
   const { mode = 'full', imageQuality } = options;
+
+  if (process.env.PUPPETEER_SKIP_DOWNLOAD === 'true') {
+    throw Object.assign(
+      new Error('Browser feature not available on this server'),
+      { statusCode: 503 }
+    );
+  }
 
   // ── Guard: Max concurrent pages ──
   if (activePages >= MAX_PAGES) {
