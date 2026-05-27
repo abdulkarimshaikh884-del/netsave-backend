@@ -6,6 +6,7 @@
 const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
+const ws = require('ws');
 
 // ── Env Check ──
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -19,7 +20,8 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 
 // ── Supabase Client ──
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false },
+  auth: { persistSession: false },
+  realtime: { transport: ws },
 });
 
 // ── Express App ──
