@@ -32,6 +32,18 @@ app.use(cors());
 app.use(express.json());
 
 // ═══════════════════════════════════════════
+// 0. GET / — Root route
+// ═══════════════════════════════════════════
+app.get('/', (req, res) => {
+  res.json({
+    app: 'NetSave Backend',
+    status: 'running',
+    version: '1.0.0',
+    endpoints: ['/health', '/browse', '/history/:userId', '/coins/add'],
+  });
+});
+
+// ═══════════════════════════════════════════
 // 1. GET /health
 // ═══════════════════════════════════════════
 app.get('/health', (req, res) => {
